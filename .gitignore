@@ -2,3 +2,4 @@ porto/porto.csv
 .DS_Store
 .env
 .venv
+__pycache__/
