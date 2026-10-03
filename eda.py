@@ -66,7 +66,7 @@ def analyze_missing_data(df):
 
 def main():
     df = pd.read_csv(DATA_PATH)
-    #inspect_structure(df)
+    inspect_structure(df)
 
     n_points = []
     for polyline in df["POLYLINE"]:
@@ -75,7 +75,7 @@ def main():
     df["n_points"] = n_points
 
     #analyze_trip_ids(df)
-    analyze_call_types(df)
+    #analyze_call_types(df)
     #analyze_day_types(df)
     #analyze_polyline(df)
     #analyze_missing_data(df)
