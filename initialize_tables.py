@@ -18,6 +18,8 @@ CREATE_TABLES = [
         origin_stand INT,
         taxi_id INT NOT NULL,
         start_time DATETIME NOT NULL,
+        end_time DATETIME NOT NULL,
+        distance_km DOUBLE NOT NULL,
         day_type CHAR(1),
         missing_data BOOLEAN NOT NULL,
         FOREIGN KEY (taxi_id) REFERENCES taxi (taxi_id)

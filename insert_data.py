@@ -1,16 +1,18 @@
 import json
+from datetime import timedelta
 import pandas as pd
+from haversine import haversine_vector, Unit
 from DbConnector import DbConnector
 
 DATA_PATH = "porto/porto.csv"
 BATCH_SIZE = 1000
 
 INSERT_TRIP_QUERY = """INSERT INTO trip
-    (trip_id, call_type, origin_call, origin_stand, taxi_id, start_time, day_type, missing_data)
-    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"""
+    (trip_id, call_type, origin_call, origin_stand, taxi_id, start_time, end_time, distance_km, day_type, missing_data)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"""
 
 INSERT_POINT_QUERY = """INSERT INTO gps_point
-    (trip_pk, seq_num, longitude, latitude)    
+    (trip_pk, seq_num, latitude, longitude)
     VALUES (%s, %s, %s, %s)"""
 
 INSERT_TAXI_QUERY = "INSERT INTO taxi (taxi_id) VALUES (%s)"
@@ -35,6 +37,14 @@ def to_int_or_none(value):
     return int(value)
 
 
+def compute_distance_km(points):
+    if len(points) < 2:
+        return 0.0
+
+    distances = haversine_vector(points[:-1], points[1:], Unit.KILOMETERS, check=False)
+    return float(distances.sum())
+
+
 def insert_taxis(connection, df):
 
     taxi_rows = []
@@ -46,18 +56,17 @@ def insert_taxis(connection, df):
     print("Taxis:", len(taxi_rows))
 
 
-def insert_batch(connection, trip_rows, polylines):
+def insert_batch(connection, trip_rows, point_lists):
     connection.cursor.executemany(INSERT_TRIP_QUERY, trip_rows)
     first_trip_pk = connection.cursor.lastrowid
 
     point_rows = []
-    for i, polyline in enumerate(polylines):
+    for i, points in enumerate(point_lists):
         trip_pk = first_trip_pk + i
-        points = json.loads(polyline)
         for seq_num, point in enumerate(points):
-            longitude = point[0]
-            latitude = point[1]
-            point_rows.append((trip_pk, seq_num, longitude, latitude))
+            latitude = point[0]
+            longitude = point[1]
+            point_rows.append((trip_pk, seq_num, latitude, longitude))
 
     connection.cursor.executemany(INSERT_POINT_QUERY, point_rows)
     connection.db_connection.commit()
@@ -66,11 +75,23 @@ def insert_batch(connection, trip_rows, polylines):
 
 def insert_trips_and_points(connection, df):
     trip_rows = []
-    polylines = []
+    point_lists = []
     trip_count = 0
     point_count = 0
 
     for row in df.itertuples(index=False):
+        polyline = json.loads(row.POLYLINE)
+
+        # POLYLINE stores [longitude, latitude], so we convert to (latitude, longitude)
+        points = []
+        for longitude, latitude in polyline:
+            points.append((latitude, longitude))
+
+        start_time = row.start_time.to_pydatetime()
+        duration_s = max(len(points) - 1, 0) * 15
+        end_time = start_time + timedelta(seconds=duration_s)
+        distance_km = compute_distance_km(points)
+
         trip_rows.append(
             (
                 row.TRIP_ID,
@@ -78,24 +99,26 @@ def insert_trips_and_points(connection, df):
                 to_int_or_none(row.ORIGIN_CALL),
                 to_int_or_none(row.ORIGIN_STAND),
                 row.TAXI_ID,
-                row.start_time.to_pydatetime(),
+                start_time,
+                end_time,
+                distance_km,
                 row.DAY_TYPE,
                 row.MISSING_DATA,
             )
         )
 
-        polylines.append(row.POLYLINE)
+        point_lists.append(points)
 
         if len(trip_rows) == BATCH_SIZE:
-            point_count += insert_batch(connection, trip_rows, polylines)
+            point_count += insert_batch(connection, trip_rows, point_lists)
             trip_count += len(trip_rows)
             trip_rows = []
-            polylines = []
+            point_lists = []
 
             if trip_count % 100000 == 0:
                 print("Trips:", trip_count)
 
-    point_count += insert_batch(connection, trip_rows, polylines)
+    point_count += insert_batch(connection, trip_rows, point_lists)
     trip_count += len(trip_rows)
 
     print("Trips:", trip_count)
